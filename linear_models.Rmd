@@ -244,6 +244,76 @@ Seems like across all neighborhoods, increasing stars doesn't have a big effect-
 
 
 
+## Logistic regression
+
+```{r}
+nyc_airbnb = 
+nyc_airbnb %>% 
+  mutate(
+    expensive_apt = as.numeric(price > 500)
+  )
+```
+updated the dataset 
+we want it to be a binary outcome, which is why we're using `as.numeric`
+
+Put "nyc_airbnb %>% 
+  mutate(
+    expensive_apt = as.numeric(price > 500)
+  ) %>% View" into console to see data
+  
+
+Fit a logistic regression for the binary outcome. 
+
+Pretty similar to linear, but it's a **generalized** linear model now, have to tell it all the info and the distribution/structure.
+
+
+```{r}
+glm(
+  expensive_apt ~ stars + borough, 
+  data = nyc_airbnb)
+```
+
+expensive_apt is outcome, as a function of stars and borough.
+
+On it's own, glm will assume you are fitting linear model with continuous outcome, so the above will run-- you have to specify.
+
+```{r}
+logistic_fit = 
+  glm(
+    expensive_apt ~ stars + borough, 
+    data = nyc_airbnb,
+    family = binomial())
+
+#cleanup:
+logistic_fit %>% 
+  broom::tidy() %>% 
+  mutate(
+    term = str_replace(term, "borough", "Borough: "),
+    estimate = exp(estimate)
+  ) %>% 
+  select(term, OR = estimate, p.value)
+
+
+#fitted values
+nyc_airbnb %>% 
+  modelr::add_predictions((logistic_fit)) %>% 
+  mutate(pred = boot::inv.logit(pred))
+```
+doing the exponent part because glm spits out things that are log odds ratios, if we want OR then we want the exponentiation. 
+
+Borough doesn't seem to be very significant but stars does have a big impact
+
+put "nyc_airbnb %>% 
+  modelr::add_predictions((logistic_fit)) %>% view" into console 
+
+inv.logit from boot package gives us probabilities 
+
+
+We do a generalized linear model so that we can build a regression when outcome is not continuous or comes from normal distribution.
+Zero or one outcome should use binomial distribution. 
+Count outcomes should use poisson distribution (family = poisson).
+
+Binomial function generates a variety of stuff glm needs to know to fit a glm with a binomial outcome, tells things like length function and other stuff. 
 
 
 
