@@ -1,0 +1,251 @@
+---
+title: "linear_models"
+author: "Tara Ahi"
+date: "11/19/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(p8105.datasets)
+library(viridis)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+
+Load NYC Airbnb data, clean/mutate/filter
+
+```{r}
+data("nyc_airbnb")
+
+nyc_airbnb = 
+  nyc_airbnb %>% 
+  mutate(stars = review_scores_location / 2) %>% 
+  rename(
+    borough = neighbourhood_group,
+    neighborhood = neighbourhood) %>% 
+  filter(borough != "Staten Island") %>% 
+  select(price, stars, borough, neighborhood, room_type)
+```
+
+
+Visualizations...
+
+```{r}
+nyc_airbnb %>% 
+  ggplot(aes(x = stars, y = price)) +
+  geom_point()
+```
+
+
+Fit a linear model...
+
+price against stars and borough
+```{r}
+fit = lm(price ~ stars + borough, data = nyc_airbnb)
+```
+
+Take a look at it...
+
+```{r}
+fit
+```
+
+Zero star refrence group has price of $70, each star rating adds about 30 dollars
+
+```{r}
+summary(fit)
+summary(fit)$coef
+
+fit %>% broom::tidy()
+```
+
+Get some additional info with summary
+
+If you want to present output... (add kable for nice view)
+
+```{r}
+fit %>% 
+  broom::tidy() %>% 
+  mutate(term = str_replace(term, "borough", "Borough: ")) %>% 
+  select(term, estimate, p.value) %>% 
+  knitr::kable(digits = 3)
+```
+
+
+## Diagnostics
+
+```{r}
+modelr::add_residuals(nyc_airbnb, fit)
+```
+
+Added residuals column, which returns observed data point from fitted value. 
+
+
+```{r}
+modelr::add_residuals(nyc_airbnb, fit) %>% 
+  ggplot(aes(x = stars, y = resid)) +
+  geom_point()
+
+modelr::add_residuals(nyc_airbnb, fit) %>% 
+  ggplot(aes(x = resid)) +
+  geom_density() +
+  xlim(-200, 200)
+```
+
+or
+
+```{r}
+nyc_airbnb %>% 
+  modelr::add_residuals(fit) %>% 
+  ggplot(aes(x = borough, y = resid)) + geom_violin()
+```
+
+or
+
+```{r}
+nyc_airbnb %>% 
+  modelr::add_residuals(fit) %>% 
+  ggplot(aes(x = stars, y = resid)) + geom_point()
+```
+
+
+Skipping over hypothesis testing... could use something like this
+
+```{r}
+fit %>% 
+  broom::tidy() %>% 
+  mutate(term = str_replace(term, "borough", "Borough: ")) %>% 
+  select(term, estimate, p.value) %>% 
+  knitr::kable(digits = 3)
+```
+
+
+## Interactions
+
+Let's try to fit a different model ...
+
+```{r}
+fit = lm(price ~ stars + room_type, data = nyc_airbnb)
+
+broom::tidy(fit)
+```
+
+Now with interaction
+
+```{r}
+fit = lm(price ~ stars * borough + room_type * borough, data = nyc_airbnb)
+
+broom::tidy(fit)
+```
+
+lots of coefficients, we could use nested datasets and then map across those datasets to build regression models that we care about:
+
+
+## Nesting
+
+```{r}
+nyc_airbnb %>% 
+  relocate(borough) %>% 
+  nest(data = price:room_type) %>% 
+  mutate(
+    lm_fits = map(.x = data, ~lm(price ~ stars + room_type, data = .x))
+  )
+```
+We've created a little dataset that I'm interested in, easier to work with.
+The mutate means you're mapping across the data column some function. We have to say price is a function of stars and room type. The `.x` is wherever we want the object to go, object being the linear model I think. 
+
+
+The lm results are a bit of a mess so we add another line to tidy:
+
+```{r}
+nyc_airbnb %>% 
+  relocate(borough) %>% 
+  nest(data = price:room_type) %>% 
+  mutate(
+    lm_fits = map(.x = data, ~lm(price ~ stars + room_type, data = .x)),
+    lm_results = map(lm_fits, broom::tidy)
+  ) %>% 
+  select(borough, lm_results) %>% 
+  unnest(lm_results) %>% 
+  filter(term == "stars")
+```
+Now we have a 4x5 dataframe.
+Then we can just selet borough and lm results since we dont' care about the data, unnest the results, gives dataframe of what effect of stars is in each region.
+Can then specify the effect of stars.
+
+
+Let's look at neighborhoods in Manhattan...
+
+```{r}
+nyc_airbnb %>% 
+  filter(borough == "Manhattan") %>% 
+  select(-borough) %>% 
+  relocate(neighborhood) %>% 
+  nest(data = price:room_type)
+```
+So for every neighborhood in Manhattan, we see all the variables for the listings (90 air bnbs in flatiron, etc). Dataframe has a column of dataframes.
+
+
+
+Effect of room type on outcome, adjusting for stars
+```{r}
+manhattan_lm_results_df = 
+nyc_airbnb %>% 
+  filter(borough == "Manhattan") %>% 
+  select(-borough) %>% 
+  relocate(neighborhood) %>% 
+  nest(data = price:room_type) %>% 
+  mutate(
+    lm_fits = map(.x = data, ~lm(price ~ stars + room_type, data = .x)),
+    lm_results = map(lm_fits, broom::tidy)
+  ) %>% 
+  select(neighborhood, lm_results) %>% 
+  unnest(lm_results)
+```
+
+
+neighborhood-specific estimates for the coefficients related to room type:
+
+```{r}
+manhattan_lm_results_df %>% 
+  filter(str_detect(term, "room_type")) %>% 
+  ggplot(aes(x = neighborhood, y = estimate)) + 
+  geom_point() + 
+  facet_grid(~term) + 
+  theme(axis.text.x = element_text(angle = 80, hjust = 1))
+```
+
+
+Getting estimates of impact of increasing star rating on price, adjusting for room type, making denisty plot:
+
+```{r}
+manhattan_lm_results_df %>% 
+  filter(term == "stars") %>% 
+  ggplot(aes(x = estimate)) +
+  geom_density()
+```
+Seems like across all neighborhoods, increasing stars doesn't have a big effect-- some places it goes up a lot, sometimes it becomes cheaper. 
+
+
+
+
+
+
+
+
