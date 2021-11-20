@@ -1,0 +1,160 @@
+---
+title: "linear_models"
+author: "Tara Ahi"
+date: "11/19/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(p8105.datasets)
+library(viridis)
+
+library(modelr)
+library(mgcv)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+
+## Simulate a dataset
+
+
+```{r}
+set.seed(1)
+
+nonlin_df = 
+  tibble(
+    id = 1:100,
+    x = runif(100, 0, 1),
+    y = 1 - 10 * (x - .3) ^ 2 + rnorm(100, 0, .3)
+  )
+
+nonlin_df %>% 
+  ggplot(aes(x = x, y = y)) + 
+  geom_point()
+```
+
+
+
+Create splits by hand; plot; fit some models.
+
+```{r}
+train_df = sample_n(nonlin_df, 80)
+test_df = anti_join(nonlin_df, train_df, by = "id")
+
+ggplot(train_df, aes(x = x, y = y)) + 
+  geom_point() + 
+  geom_point(data = test_df, color = "red")
+```
+
+anti join says to find people who do not overlap between the two datasets by this id variable
+red are testing dataset, black is training dataset.
+
+Fit my models, starting with linear model:
+
+```{r}
+linear_mod = lm(y ~ x, data = train_df)
+smooth_mod = mgcv::gam(y ~ s(x), data = train_df)
+wiggly_mod = mgcv::gam(y ~ s(x, k = 30), sp = 10e-6, data = train_df)
+```
+
+
+plot the results
+
+```{r}
+train_df %>% 
+  add_predictions(smooth_mod) %>% 
+  ggplot(aes(x = x, y = y)) + geom_point() + 
+  geom_line(aes(y = pred), color = "red")
+```
+
+If you put wiggly instead of smooth, it bounces around a lot-- more complex. 
+If you put linear instead of smooth, it's just a line-- not complex enough.
+
+#### Quantify the results
+Take the root mean sq error from linear model, applied to testing dataframe.
+
+```{r}
+rmse(linear_mod, test_df)
+rmse(smooth_mod, test_df)
+rmse(wiggly_mod, test_df)
+```
+Numbers don't look great-- maybe it was an unlucky 80/20 split. Should we try a different split? This is an iterative process. 
+
+
+## CV iteratively
+
+Use `modelr::crossv_mc`
+I think it stands for monte carlo. 
+
+```{r}
+cv_df = 
+  crossv_mc(nonlin_df, 100) 
+
+cv_df %>% pull(train) %>% .[[1]] %>% as_tibble
+```
+
+partition nonlinear df 100 times, each one training testing split. Goal is to add columns that say what happens when I fit models to this, what is rmse when take model fit to training test and apply it to testing data set, will get a bunch of rmse values, want to fit smooth/linear/wiggly and get rmse for each. 
+
+```{r}
+cv_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+```
+
+Let's fit models...
+
+```{r}
+cv_df = 
+  cv_df %>% 
+  mutate(
+    linear_mod  = map(train, ~lm(y ~ x, data = .x)),
+    smooth_mod  = map(train, ~mgcv::gam(y ~ s(x), data = .x)),
+    wiggly_mod  = map(train, ~gam(y ~ s(x, k = 30), sp = 10e-6, data = .x))) %>% 
+  mutate(
+    rmse_linear = map2_dbl(linear_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_smooth = map2_dbl(smooth_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_wiggly = map2_dbl(wiggly_mod, test, ~rmse(model = .x, data = .y)))
+```
+
+Look at output
+
+showing distribution of rsme values for each candidate model:
+```{r}
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+
+
+
+
+
+
+
+
+
