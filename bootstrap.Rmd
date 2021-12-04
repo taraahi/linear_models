@@ -1,0 +1,87 @@
+---
+title: "bootstrapping"
+author: "Tara Ahi"
+date: "12/4/2021"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+library(tidyverse)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+options(
+  ggplot2.continuous.clour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+sclae_colour_discrete = scale_color_viridis_d()
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+```{r}
+library(tidyverse)
+library(p8105.datasets)
+
+set.seed(1)
+```
+
+**Boostrapping in SLR**
+
+```{r}
+n_samp = 250
+
+sim_df_const = 
+  tibble(
+    x = rnorm(n_samp, 1, 1),
+    error = rnorm(n_samp, 0, 1),
+    y = 2 + 3 * x + error
+  )
+
+sim_df_nonconst = sim_df_const %>% 
+  mutate(
+  error = error * .75 * x,
+  y = 2 + 3 * x + error
+)
+```
+
+Make a plot
+
+```{r}
+sim_df_const %>% 
+  ggplot(aes(x = x, y = y)) +
+  geom_point()
+```
+
+linear model of y against x
+
+```{r}
+sim_df_const %>% 
+  lm(y ~ x, data = .) %>% 
+  broom::tidy()
+```
+_intercept is 2, slope is about 3, SE for slope is about 0.7_
+
+Getting good slope but bad SEs, let's try to use the bootstrap:
+
+sample_frac tells it the proportion/size you want (we want the same one we started with, 1. we want replace = true)
+
+```{r}
+sim_df_nonconst %>% 
+  sample_frac(size = 1, replace = TRUE) %>% 
+  arrange(x)
+```
+This is what we get when we draw from sample with replacement, it'll change slightly each time you run it.
+
+
+
+
+
+
+
