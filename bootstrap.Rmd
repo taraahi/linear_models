@@ -28,6 +28,8 @@ scale_fill_discrete = scale_fill_viridis_d
 ```{r}
 library(tidyverse)
 library(p8105.datasets)
+library(modelr)
+library(patchwork)
 
 set.seed(1)
 ```
@@ -70,18 +72,173 @@ _intercept is 2, slope is about 3, SE for slope is about 0.7_
 
 Getting good slope but bad SEs, let's try to use the bootstrap:
 
-sample_frac tells it the proportion/size you want (we want the same one we started with, 1. we want replace = true)
+sample_frac tells it the proportion/size you want (we want the same one we started with, 1. we want replace = true). First we draw sample with replacement, then we run linear model.
+We do this a bunch of time and then we get to see the actual distribution of the intercept and the actual distribution of the slope, thanks to repeated sampling. 
+
+```{r}
+bootstrap_sample = 
+  sim_df_nonconst %>% 
+  sample_frac(size = 1, replace = TRUE) %>% 
+  arrange(x)
+
+lm(y~x, data = bootstrap_sample)
+```
+This is what we get when we draw from sample with replacement, it'll change slightly each time you run it. Then the linear model.
+
+Let's write a couple functions...
+* one will do bootstrap sampling
+* given that, we'll map across all dataframes
+* fit linear model
+* get intercepts and slopes
+
+```{r}
+boot_sample = function(df) {
+  
+  sample_frac(df, size = 1, replace = TRUE)
+  
+}
+```
+
+Now we'll make a tibble to keep track of everything. Note the function being applied to df:
+
+```{r}
+boot_strap_df = 
+  tibble(
+    strap_number = 1:1000,
+    strap_sample = rerun(1000, boot_sample(sim_df_nonconst))
+  )
+```
+
+If we just run the rerun part, it'll show you the 1000 entries from the boostrap sample.
+
+Each part of the df is a draw with replacement.
+
+From here, things are kind of the same as "always"-- referring to regressing across all neighborhoods in Manhattan, across all regression samples.
+
+```{r}
+bootstrap_results = 
+  boot_strap_df %>% 
+  mutate(
+   models = map(.x = strap_sample, ~lm(y~x, data = .x)),
+   results = map(models, broom::tidy)
+  ) %>% 
+  select(strap_number, results) %>% 
+  unnest(results)
+```
+
+Values are bouncing around 2 and 3, looks legit. 
+
+
+What's the distribution under repeated sampling?
+```{r}
+bootstrap_results %>% 
+  ggplot(aes(x = estimate)) +
+  geom_histogram() +
+  facet_grid(~term, scales = "free")
+```
+They seem to be centered around the right things, seem normally distributed.
+Scales free says x axis doesn't have to be the same in both cases!
+
+Remember, these are sampled around this example in particular, not the truth.
+
+
+Refit y against x, tidy results
+```{r}
+lm(y ~ x, data = sim_df_nonconst) %>% 
+  broom::tidy()
+```
+SE for intercept is about .1, for intercept it's about .75
+
+
+If we took bootstrap results and grouped by term and summarize, it's sort of the reverse
+```{r}
+bootstrap_results %>% 
+  group_by(term) %>% 
+  summarize(
+    se = sd(estimate)
+  )
+```
+This distribution is what we think intercept would look like under repeated sampling, it's the actual distribution of a estimation coefficient under repeated sampling. Taking mean should be whatever estimate is, SE should be SE of parameter in model. 
+
+Fitting the linear model first tells me what it thinks the standard error should be under parametric assumptions of normality and constant variance. 
+The next thing gives actual empirical SE, what we think the write answer is. We kind of get the opposite thing first, it seems flipped.
+The second one is a more accurate SE for that slope, this is the right one to use. 
+
+
+## `use modelr`
 
 ```{r}
 sim_df_nonconst %>% 
-  sample_frac(size = 1, replace = TRUE) %>% 
-  arrange(x)
+  bootstrap(n = 1000, id = "strap_number") %>% 
+  mutate(
+    models = map(.x = strap, ~lm(y ~ x, data = .x)),
+    results = map(models, broom::tidy)
+  )
 ```
-This is what we get when we draw from sample with replacement, it'll change slightly each time you run it.
 
 
 
+## AirBnB data
+
+```{r}
+data("nyc_airbnb")
+
+nyc_airbnb = 
+  nyc_airbnb %>% 
+  mutate(stars = review_scores_location/2) %>% 
+  rename(
+    borough = neighbourhood_group
+  ) %>% 
+  filter(borough != "Staten Island") %>% 
+  select(price, stars, borough, room_type)
+```
+
+```{r}
+nyc_airbnb %>% 
+  ggplot(aes(x = stars, y = price)) +
+  geom_point()
+```
+
+We see that in general, stars increase with price. But there are some outliers at the top. If we were to just run lm (linear model) and ran it on this data, we'd get a slope that makes sense and intercept that's fine but not a good distribution (p value, CI, etc.) because assumptions aren't met.
+We're going to try to bootstrap to get a linear component and see distribution to see assocation between stars and price.
+
+```{r}
+airbnb_bootstrap_results =
+  nyc_airbnb %>% 
+  filter(borough == "Manhattan") %>% 
+  bootstrap(n = 1000, id = "strap_number") %>% 
+  mutate(
+    models = map(.x = strap, ~lm(price ~ stars, data = .x)),
+    results = map(models, broom::tidy)
+  ) %>% 
+  select(strap_number, results) %>% 
+  unnest(results)
+```
+
+Plot it
+
+```{r}
+ggp_star_est =
+  airbnb_bootstrap_results %>% 
+  filter(term == "stars") %>% 
+  ggplot(aes(estimate)) +
+  geom_density()
+```
+
+```{r}
+ggp_scatter = 
+  nyc_airbnb %>% 
+  filter(borough == "Manhattan") %>% 
+  ggplot(aes(x = stars, y = price)) +
+  geom_point()
+```
+
+put them together using the patchwork library
+
+```{r}
+ggp_star_est + ggp_scatter
+```
 
 
-
+In this instance, we see more estimates on the left hand side of the curve. When the outliers show up in the right scatter graph, we see a steeper slope. If they don't, we'll see a more shallow slope on the curve on the left. There's a heavier collection of slope estimates on the left side of the curve when the outliers show up in the scatter plot.
 
